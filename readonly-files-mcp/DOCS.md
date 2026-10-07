@@ -4,7 +4,6 @@ Example:
 
 ```yaml
 access_token: "use-a-long-random-token"
-port: 3100
 max_text_bytes: 2097152
 max_copy_bytes: 1073741824
 sources:
@@ -16,7 +15,7 @@ sources:
     path: transcripts
 ```
 
-`port` controls the TCP port the MCP server listens on. The default is `3100`. After changing it, restart the add-on and use the same port in the Talon MCP URL, for example `http://192.168.1.161:3100/mcp`.
+The MCP listens internally on port `3100`. Home Assistant exposes this as a configurable **Network** port. The default host port is also `3100`; change it from the add-on Network settings if that port is already in use. Talon must use the configured host port, for example `http://192.168.1.161:3100/mcp`.
 
 `root` may be `share` or `media`. `path` is always relative to that Home Assistant folder.
 
