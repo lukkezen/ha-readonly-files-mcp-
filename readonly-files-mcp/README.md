@@ -15,9 +15,9 @@ A small Home Assistant add-on that exposes only explicitly configured folders th
 ## Tools
 
 - `list_sources`
-- `list_files`
-- `read_text`
-- `search_text`
+- `list_files` — `source` is optional. With no arguments it recursively returns all files from all configured sources, newest first. Each result includes `source`, `path`, `size` and `mtime`.
+- `read_text` — requires `source` and `path` so reads remain unambiguous.
+- `search_text` — requires `query`; `source` is optional. Without a source it searches all configured sources.
 - `copy_to_export`
 - `list_exports`
 

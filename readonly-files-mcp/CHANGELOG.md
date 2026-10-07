@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Makes `source` optional for `list_files`.
+- Calling `list_files` with no arguments now recursively returns all files from every configured source, sorted newest first.
+- Combined list results include `source`, `path`, `size`, and `mtime` so agents can immediately select a file without first navigating source roots.
+- Makes `source` optional for `search_text`; searches span all configured sources by default.
+- Keeps `source` required for `read_text` and `copy_to_export` so file selection remains explicit and safe.
+
 ## 0.2.2
 
 - Publishes configured source names as an enum in MCP tool schemas so agents know the valid `source` values.
