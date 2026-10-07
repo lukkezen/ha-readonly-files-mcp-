@@ -1,3 +1,8 @@
+## 0.4.0
+
+- `copy_to_export` now returns a signed, short-lived `download_url` that another local service such as Talon can fetch without exposing the MCP bearer token.
+- Added authenticated-by-signature streaming download endpoint for private exports. Links expire after 5 minutes and remain confined to the private export directory.
+
 # Changelog
 
 ## 0.3.0

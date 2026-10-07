@@ -26,3 +26,8 @@ The server never exposes an arbitrary-path tool. Talon can only address a config
 `copy_to_export` copies a single file from a configured read-only source to the MCP add-on's private export area. Source files cannot be modified, renamed, moved or deleted.
 
 This is intentionally a copy, not a move.
+
+
+## Export downloads
+
+`copy_to_export` returns `export_path`, `size`, and a signed `download_url`. The URL is valid for five minutes and can be handed directly to a trusted local consumer such as Talon's `channel_send` attachment support. The URL signature does not reveal the MCP access token and the endpoint only serves files previously copied into the add-on's private export directory.

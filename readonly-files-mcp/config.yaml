@@ -1,5 +1,5 @@
 name: Read-only Files MCP
-version: "0.3.0"
+version: "0.4.0"
 slug: readonly_files_mcp
 description: Read explicitly allowed Home Assistant folders and copy files into a private export area.
 url: https://github.com/lukkezen/ha-readonly-files-mcp-
