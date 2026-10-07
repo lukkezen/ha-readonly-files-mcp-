@@ -93,8 +93,7 @@ async function listDir(sourceName, rel='.') {
   return rows;
 }
 async function readText(sourceName, rel) {
-  const src = sources.get(sourceName);
-  if (!src) throw new Error('Unknown source');
+  const src = resolveSource(sourceName);
   const target = await realInside(src.abs, rel);
   const st = await fs.stat(target);
   if (!st.isFile()) throw new Error('Not a file');
@@ -102,8 +101,7 @@ async function readText(sourceName, rel) {
   return fs.readFile(target,'utf8');
 }
 async function searchText(sourceName, query, subdir='.') {
-  const src = sources.get(sourceName);
-  if (!src) throw new Error('Unknown source');
+  const src = resolveSource(sourceName);
   const start = subdir === '.' ? src.abs : await realInside(src.abs, subdir);
   const q = String(query).toLowerCase();
   if (!q) throw new Error('query is required');
