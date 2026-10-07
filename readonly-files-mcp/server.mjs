@@ -7,6 +7,7 @@ const OPTIONS_FILE = '/data/options.json';
 const EXPORT_ROOT = '/data/exports';
 const ROOTS = { share: '/ha-share', media: '/ha-media' };
 const PORT = 3100;
+const SERVER_VERSION = '0.3.0';
 
 const opts = JSON.parse(await fs.readFile(OPTIONS_FILE, 'utf8'));
 const TOKEN = String(opts.access_token || '');
@@ -92,6 +93,30 @@ async function listDir(sourceName, rel='.') {
   }
   return rows;
 }
+
+async function listAllFiles() {
+  const rows = [];
+  async function walk(src, dir, relBase='') {
+    for (const e of await fs.readdir(dir,{withFileTypes:true})) {
+      const full = path.join(dir,e.name);
+      const rel = path.join(relBase,e.name);
+      if (e.isDirectory()) {
+        await walk(src, full, rel);
+        continue;
+      }
+      const st = await fs.stat(full);
+      rows.push({
+        source: src.name,
+        path: rel.split(path.sep).join('/'),
+        size: st.size,
+        mtime: st.mtime.toISOString()
+      });
+    }
+  }
+  for (const src of sources.values()) await walk(src, src.abs);
+  rows.sort((a,b) => b.mtime.localeCompare(a.mtime));
+  return rows;
+}
 async function readText(sourceName, rel) {
   const src = resolveSource(sourceName);
   const target = await realInside(src.abs, rel);
@@ -101,27 +126,30 @@ async function readText(sourceName, rel) {
   return fs.readFile(target,'utf8');
 }
 async function searchText(sourceName, query, subdir='.') {
-  const src = resolveSource(sourceName);
-  const start = subdir === '.' ? src.abs : await realInside(src.abs, subdir);
   const q = String(query).toLowerCase();
   if (!q) throw new Error('query is required');
   const hits=[];
-  async function walk(dir, relBase='') {
+  const selected = String(sourceName ?? '').trim() ? [resolveSource(sourceName)] : [...sources.values()];
+  async function walk(src, dir, relBase='') {
     for (const e of await fs.readdir(dir,{withFileTypes:true})) {
       const full=path.join(dir,e.name);
       const rel=path.join(relBase,e.name);
-      if (e.isDirectory()) { if (hits.length<100) await walk(full,rel); continue; }
+      if (e.isDirectory()) { if (hits.length<100) await walk(src,full,rel); continue; }
       const st=await fs.stat(full);
       if (st.size>MAX_TEXT_BYTES) continue;
       try {
         const txt=await fs.readFile(full,'utf8');
         const idx=txt.toLowerCase().indexOf(q);
-        if(idx>=0) hits.push({path:rel,index:idx,snippet:txt.slice(Math.max(0,idx-120),idx+q.length+240)});
+        if(idx>=0) hits.push({source:src.name,path:rel.split(path.sep).join('/'),index:idx,snippet:txt.slice(Math.max(0,idx-120),idx+q.length+240)});
       } catch {}
       if(hits.length>=100) return;
     }
   }
-  await walk(start);
+  for (const src of selected) {
+    const start = subdir === '.' ? src.abs : await realInside(src.abs, subdir);
+    await walk(src,start);
+    if (hits.length>=100) break;
+  }
   return hits;
 }
 async function copyToExport(sourceName, rel, exportName='') {
@@ -153,7 +181,7 @@ async function listExports() {
 async function handleTool(name,args={}) {
   switch(name) {
     case 'list_sources': return textResult([...sources.values()].map(s=>({name:s.name,root:s.rootKey,read_only:true})));
-    case 'list_files': return textResult(await listDir(args.source,String(args.path||'.')));
+    case 'list_files': return textResult(String(args.source ?? '').trim() ? await listDir(args.source,String(args.path||'.')) : await listAllFiles());
     case 'read_text': return textResult(await readText(args.source,args.path));
     case 'search_text': return textResult(await searchText(args.source,args.query,String(args.path||'.')));
     case 'copy_to_export': return textResult(await copyToExport(args.source,args.path,String(args.export_name||'')));
@@ -165,9 +193,9 @@ const SOURCE_NAMES = [...sources.keys()];
 const sourceSchema = { type:'string', enum: SOURCE_NAMES, description:`Allowed source. Use exactly one of: ${SOURCE_NAMES.join(', ')}` };
 const tools=[
   {name:'list_sources',description:'List configured read-only file sources.',inputSchema:{type:'object',properties:{}}},
-  {name:'list_files',description:'List files/directories inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source']}},
+  {name:'list_files',description:'List files. With no source, recursively returns all files from all allowed sources, newest first. Optionally set source to list one source/directory.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}}}},
   {name:'read_text',description:'Read a UTF-8 text file from an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source','path']}},
-  {name:'search_text',description:'Search text recursively inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,query:{type:'string'},path:{type:'string'}},required:['source','query']}},
+  {name:'search_text',description:'Search text recursively. With no source, searches all allowed sources. Optionally set source to limit the search.',inputSchema:{type:'object',properties:{source:sourceSchema,query:{type:'string'},path:{type:'string'}},required:['query']}},
   {name:'copy_to_export',description:'Copy a file from an allowed read-only source into the MCP private export area. Never modifies the source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'},export_name:{type:'string'}},required:['source','path']}},
   {name:'list_exports',description:'List files previously copied into the private export area.',inputSchema:{type:'object',properties:{}}}
 ];
@@ -180,7 +208,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method!=='POST') return json(res,405,{error:'POST required'});
     const msg=await readBody(req);
     const id=msg.id ?? null;
-    if(msg.method==='initialize') return json(res,200,ok(id,{protocolVersion:msg.params?.protocolVersion||'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'ha-readonly-files-mcp',version:'0.2.2'}}));
+    if(msg.method==='initialize') return json(res,200,ok(id,{protocolVersion:msg.params?.protocolVersion||'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'ha-readonly-files-mcp',version:SERVER_VERSION}}));
     if(msg.method==='notifications/initialized') return json(res,202,{});
     if(msg.method==='tools/list') return json(res,200,ok(id,{tools}));
     if(msg.method==='tools/call') {
