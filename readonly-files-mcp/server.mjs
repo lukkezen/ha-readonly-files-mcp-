@@ -1,13 +1,14 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { promises as fs } from 'node:fs';
+import { promises as fs, createReadStream } from 'node:fs';
 
 const OPTIONS_FILE = '/data/options.json';
 const EXPORT_ROOT = '/data/exports';
 const ROOTS = { share: '/ha-share', media: '/ha-media' };
 const PORT = 3100;
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.4.0';
+const EXPORT_URL_TTL_SEC = 300;
 
 const opts = JSON.parse(await fs.readFile(OPTIONS_FILE, 'utf8'));
 const TOKEN = String(opts.access_token || '');
@@ -81,6 +82,61 @@ function ok(id, result) { return { jsonrpc:'2.0', id, result }; }
 function fail(id, code, message) { return { jsonrpc:'2.0', id, error:{ code, message } }; }
 function textResult(obj) {
   return { content:[{ type:'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj,null,2) }] };
+}
+function signExport(exportPath, expires) {
+  return crypto.createHmac('sha256', TOKEN).update(exportPath + '\n' + String(expires)).digest('base64url');
+}
+function exportDownloadUrl(req, exportPath) {
+  const expires = Math.floor(Date.now() / 1000) + EXPORT_URL_TTL_SEC;
+  const sig = signExport(exportPath, expires);
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwardedProto === 'https' ? 'https' : 'http';
+  const host = String(req.headers.host || 'localhost:3100');
+  const encoded = exportPath.split('/').map(encodeURIComponent).join('/');
+  return `${proto}://${host}/export/${encoded}?expires=${expires}&sig=${encodeURIComponent(sig)}`;
+}
+async function resolveExport(exportPath) {
+  if (!safeRelative(exportPath)) throw new Error('Invalid export path');
+  const base = await fs.realpath(EXPORT_ROOT);
+  const target = await fs.realpath(path.join(base, exportPath));
+  const prefix = base.endsWith(path.sep) ? base : base + path.sep;
+  if (!target.startsWith(prefix)) throw new Error('Export path escapes private export area');
+  return target;
+}
+async function serveExport(req, res, pathname, searchParams) {
+  const encodedPath = pathname.slice('/export/'.length);
+  let exportPath;
+  try {
+    exportPath = encodedPath.split('/').map(decodeURIComponent).join('/');
+  } catch {
+    return json(res,400,{error:'invalid export path'});
+  }
+  const expires = Number(searchParams.get('expires') || 0);
+  const sig = String(searchParams.get('sig') || '');
+  if (!Number.isInteger(expires) || expires < Math.floor(Date.now()/1000) || !sig) {
+    return json(res,403,{error:'expired or invalid export link'});
+  }
+  const expected = signExport(exportPath, expires);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a,b)) {
+    return json(res,403,{error:'invalid export signature'});
+  }
+  let target;
+  try {
+    target = await resolveExport(exportPath);
+  } catch {
+    return json(res,404,{error:'export not found'});
+  }
+  const st = await fs.stat(target);
+  if (!st.isFile()) return json(res,404,{error:'export not found'});
+  res.writeHead(200,{
+    'content-type':'application/octet-stream',
+    'content-length':st.size,
+    'content-disposition':`attachment; filename="${path.basename(target).replace(/"/g,'')}"`,
+    'cache-control':'private, max-age=60'
+  });
+  createReadStream(target).pipe(res);
 }
 async function listDir(sourceName, rel='.') {
   const src = resolveSource(sourceName);
@@ -178,13 +234,16 @@ async function listExports() {
   await walk(EXPORT_ROOT);
   return out;
 }
-async function handleTool(name,args={}) {
+async function handleTool(name,args={},req) {
   switch(name) {
     case 'list_sources': return textResult([...sources.values()].map(s=>({name:s.name,root:s.rootKey,read_only:true})));
     case 'list_files': return textResult(String(args.source ?? '').trim() ? await listDir(args.source,String(args.path||'.')) : await listAllFiles());
     case 'read_text': return textResult(await readText(args.source,args.path));
     case 'search_text': return textResult(await searchText(args.source,args.query,String(args.path||'.')));
-    case 'copy_to_export': return textResult(await copyToExport(args.source,args.path,String(args.export_name||'')));
+    case 'copy_to_export': {
+      const exported = await copyToExport(args.source,args.path,String(args.export_name||''));
+      return textResult({...exported, download_url: exportDownloadUrl(req, exported.export_path), expires_in_seconds: EXPORT_URL_TTL_SEC});
+    }
     case 'list_exports': return textResult(await listExports());
     default: throw new Error('Unknown tool');
   }
@@ -202,8 +261,10 @@ const tools=[
 
 const server=http.createServer(async(req,res)=>{
   try {
-    if(req.url==='/health') return json(res,200,{ok:true,sources:sources.size});
-    if(req.url!=='/mcp') return json(res,404,{error:'not found'});
+    const parsedUrl = new URL(req.url || '/', 'http://localhost');
+    if(parsedUrl.pathname==='/health') return json(res,200,{ok:true,sources:sources.size});
+    if(req.method==='GET' && parsedUrl.pathname.startsWith('/export/')) return serveExport(req,res,parsedUrl.pathname,parsedUrl.searchParams);
+    if(parsedUrl.pathname!=='/mcp') return json(res,404,{error:'not found'});
     if(!authorized(req)) return json(res,401,{error:'unauthorized','www-authenticate':'Bearer'});
     if(req.method!=='POST') return json(res,405,{error:'POST required'});
     const msg=await readBody(req);
@@ -212,7 +273,7 @@ const server=http.createServer(async(req,res)=>{
     if(msg.method==='notifications/initialized') return json(res,202,{});
     if(msg.method==='tools/list') return json(res,200,ok(id,{tools}));
     if(msg.method==='tools/call') {
-      try { return json(res,200,ok(id,await handleTool(msg.params?.name,msg.params?.arguments||{}))); }
+      try { return json(res,200,ok(id,await handleTool(msg.params?.name,msg.params?.arguments||{},req))); }
       catch(e) { return json(res,200,ok(id,{content:[{type:'text',text:String(e.message||e)}],isError:true})); }
     }
     return json(res,200,fail(id,-32601,'Method not found'));
