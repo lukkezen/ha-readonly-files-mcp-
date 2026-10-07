@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Publishes configured source names as an enum in MCP tool schemas so agents know the valid `source` values.
+- Accepts source names case-insensitively while preserving the configured display name.
+- Returns clearer errors that include the valid source names when `source` is missing or unknown.
+
 ## 0.2.1
 
 - Fixes port configuration to use Home Assistant add-on `ports` mapping instead of an application option.

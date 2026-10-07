@@ -45,6 +45,17 @@ for (const item of Array.isArray(opts.sources) ? opts.sources : []) {
   } catch {}
 }
 
+function resolveSource(name) {
+  const raw = String(name ?? '').trim();
+  if (!raw) throw new Error(`source is required; valid sources: ${[...sources.keys()].join(', ')}`);
+  if (sources.has(raw)) return sources.get(raw);
+  const lower = raw.toLowerCase();
+  for (const [key, src] of sources) {
+    if (key.toLowerCase() === lower) return src;
+  }
+  throw new Error(`Unknown source '${raw}'; valid sources: ${[...sources.keys()].join(', ')}`);
+}
+
 function json(res, status, body, extra={}) {
   const data = JSON.stringify(body);
   res.writeHead(status, { 'content-type':'application/json', 'content-length':Buffer.byteLength(data), ...extra });
@@ -71,8 +82,7 @@ function textResult(obj) {
   return { content:[{ type:'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj,null,2) }] };
 }
 async function listDir(sourceName, rel='.') {
-  const src = sources.get(sourceName);
-  if (!src) throw new Error('Unknown source');
+  const src = resolveSource(sourceName);
   const target = rel === '.' ? src.abs : await realInside(src.abs, rel);
   const rows = [];
   for (const e of await fs.readdir(target,{withFileTypes:true})) {
@@ -83,8 +93,7 @@ async function listDir(sourceName, rel='.') {
   return rows;
 }
 async function readText(sourceName, rel) {
-  const src = sources.get(sourceName);
-  if (!src) throw new Error('Unknown source');
+  const src = resolveSource(sourceName);
   const target = await realInside(src.abs, rel);
   const st = await fs.stat(target);
   if (!st.isFile()) throw new Error('Not a file');
@@ -92,8 +101,7 @@ async function readText(sourceName, rel) {
   return fs.readFile(target,'utf8');
 }
 async function searchText(sourceName, query, subdir='.') {
-  const src = sources.get(sourceName);
-  if (!src) throw new Error('Unknown source');
+  const src = resolveSource(sourceName);
   const start = subdir === '.' ? src.abs : await realInside(src.abs, subdir);
   const q = String(query).toLowerCase();
   if (!q) throw new Error('query is required');
@@ -117,8 +125,7 @@ async function searchText(sourceName, query, subdir='.') {
   return hits;
 }
 async function copyToExport(sourceName, rel, exportName='') {
-  const src=sources.get(sourceName);
-  if(!src) throw new Error('Unknown source');
+  const src=resolveSource(sourceName);
   const source=await realInside(src.abs,rel);
   const st=await fs.stat(source);
   if(!st.isFile()) throw new Error('Only files can be copied');
@@ -154,12 +161,14 @@ async function handleTool(name,args={}) {
     default: throw new Error('Unknown tool');
   }
 }
+const SOURCE_NAMES = [...sources.keys()];
+const sourceSchema = { type:'string', enum: SOURCE_NAMES, description:`Allowed source. Use exactly one of: ${SOURCE_NAMES.join(', ')}` };
 const tools=[
   {name:'list_sources',description:'List configured read-only file sources.',inputSchema:{type:'object',properties:{}}},
-  {name:'list_files',description:'List files/directories inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:{type:'string'},path:{type:'string'}},required:['source']}},
-  {name:'read_text',description:'Read a UTF-8 text file from an allowed read-only source.',inputSchema:{type:'object',properties:{source:{type:'string'},path:{type:'string'}},required:['source','path']}},
-  {name:'search_text',description:'Search text recursively inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:{type:'string'},query:{type:'string'},path:{type:'string'}},required:['source','query']}},
-  {name:'copy_to_export',description:'Copy a file from an allowed read-only source into the MCP private export area. Never modifies the source.',inputSchema:{type:'object',properties:{source:{type:'string'},path:{type:'string'},export_name:{type:'string'}},required:['source','path']}},
+  {name:'list_files',description:'List files/directories inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source']}},
+  {name:'read_text',description:'Read a UTF-8 text file from an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source','path']}},
+  {name:'search_text',description:'Search text recursively inside an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,query:{type:'string'},path:{type:'string'}},required:['source','query']}},
+  {name:'copy_to_export',description:'Copy a file from an allowed read-only source into the MCP private export area. Never modifies the source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'},export_name:{type:'string'}},required:['source','path']}},
   {name:'list_exports',description:'List files previously copied into the private export area.',inputSchema:{type:'object',properties:{}}}
 ];
 
@@ -171,7 +180,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method!=='POST') return json(res,405,{error:'POST required'});
     const msg=await readBody(req);
     const id=msg.id ?? null;
-    if(msg.method==='initialize') return json(res,200,ok(id,{protocolVersion:msg.params?.protocolVersion||'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'ha-readonly-files-mcp',version:'0.1.0'}}));
+    if(msg.method==='initialize') return json(res,200,ok(id,{protocolVersion:msg.params?.protocolVersion||'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'ha-readonly-files-mcp',version:'0.2.2'}}));
     if(msg.method==='notifications/initialized') return json(res,202,{});
     if(msg.method==='tools/list') return json(res,200,ok(id,{tools}));
     if(msg.method==='tools/call') {
