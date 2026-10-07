@@ -5,15 +5,16 @@ import { promises as fs } from 'node:fs';
 
 const OPTIONS_FILE = '/data/options.json';
 const EXPORT_ROOT = '/data/exports';
-const PORT = 3000;
 const ROOTS = { share: '/ha-share', media: '/ha-media' };
 
 const opts = JSON.parse(await fs.readFile(OPTIONS_FILE, 'utf8'));
 const TOKEN = String(opts.access_token || '');
+const PORT = Number(opts.port || 3100);
 const MAX_TEXT_BYTES = Number(opts.max_text_bytes || 2097152);
 const MAX_COPY_BYTES = Number(opts.max_copy_bytes || 1073741824);
 
 if (!TOKEN) throw new Error('access_token is required');
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('port must be between 1 and 65535');
 await fs.mkdir(EXPORT_ROOT, { recursive: true });
 
 const sources = new Map();
