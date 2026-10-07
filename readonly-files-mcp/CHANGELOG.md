@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Fixes port configuration to use Home Assistant add-on `ports` mapping instead of an application option.
+- Keeps the MCP internal port fixed at `3100`.
+- Exposes `3100/tcp` in the Home Assistant Network section, where the host port can be changed safely.
+
 ## 0.2.0
 
 - Makes the MCP listening port configurable through the Home Assistant add-on configuration.
