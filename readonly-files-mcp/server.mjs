@@ -7,7 +7,7 @@ const OPTIONS_FILE = '/data/options.json';
 const EXPORT_ROOT = '/data/exports';
 const ROOTS = { share: '/ha-share', media: '/ha-media' };
 const PORT = 3100;
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.5.0';
 const EXPORT_URL_TTL_SEC = 300;
 
 const opts = JSON.parse(await fs.readFile(OPTIONS_FILE, 'utf8'));
