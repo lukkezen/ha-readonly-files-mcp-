@@ -222,6 +222,33 @@ async function copyToExport(sourceName, rel, exportName='') {
   await fs.copyFile(source,dest);
   return {source:rel,export_path:`${sourceName}/${baseName}`,size:st.size};
 }
+const MAX_MCP_CHUNK_BYTES = 256 * 1024;
+async function fileInfo(sourceName, rel) {
+  const src = resolveSource(sourceName);
+  const target = await realInside(src.abs, rel);
+  const st = await fs.stat(target);
+  if (!st.isFile()) throw new Error('Not a file');
+  return { target, size: st.size, mtime: st.mtime.toISOString(), name: path.basename(target) };
+}
+function mimeFor(name) {
+  const ext = path.extname(name).toLowerCase();
+  return ({'.mp4':'video/mp4','.mp3':'audio/mpeg','.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.json':'application/json','.txt':'text/plain','.vtt':'text/vtt'})[ext] || 'application/octet-stream';
+}
+async function readFileChunk(sourceName, rel, offset=0, length=MAX_MCP_CHUNK_BYTES) {
+  const info = await fileInfo(sourceName, rel);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > info.size) throw new Error('Invalid offset');
+  if (!Number.isSafeInteger(length) || length < 1 || length > MAX_MCP_CHUNK_BYTES) throw new Error('Invalid length (maximum 262144 bytes)');
+  const count = Math.min(length, info.size - offset);
+  const handle = await fs.open(info.target, 'r');
+  let bytes;
+  try {
+    bytes = Buffer.alloc(count);
+    const {bytesRead} = await handle.read(bytes, 0, count, offset);
+    bytes = bytes.subarray(0, bytesRead);
+  } finally { await handle.close(); }
+  return { source: sourceName, path: rel, filename: info.name, mime_type: mimeFor(info.name), size: info.size, offset, bytes_read: bytes.length, next_offset: offset + bytes.length, eof: offset + bytes.length >= info.size, encoding: 'base64', data: bytes.toString('base64') };
+}
+
 async function listExports() {
   const out=[];
   async function walk(dir, rel='') {
@@ -245,6 +272,8 @@ async function handleTool(name,args={},req) {
       return textResult({...exported, download_url: exportDownloadUrl(req, exported.export_path), expires_in_seconds: EXPORT_URL_TTL_SEC});
     }
     case 'list_exports': return textResult(await listExports());
+    case 'get_file_info': { const {target,...info} = await fileInfo(args.source,args.path); return textResult({...info,source:args.source,path:args.path,mime_type:mimeFor(info.name)}); }
+    case 'read_file_chunk': return textResult(await readFileChunk(args.source,args.path,args.offset ?? 0,args.length ?? MAX_MCP_CHUNK_BYTES));
     default: throw new Error('Unknown tool');
   }
 }
@@ -256,7 +285,9 @@ const tools=[
   {name:'read_text',description:'Read a UTF-8 text file from an allowed read-only source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source','path']}},
   {name:'search_text',description:'Search text recursively. With no source, searches all allowed sources. Optionally set source to limit the search.',inputSchema:{type:'object',properties:{source:sourceSchema,query:{type:'string'},path:{type:'string'}},required:['query']}},
   {name:'copy_to_export',description:'Copy a file from an allowed read-only source into the MCP private export area. Never modifies the source.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'},export_name:{type:'string'}},required:['source','path']}},
-  {name:'list_exports',description:'List files previously copied into the private export area.',inputSchema:{type:'object',properties:{}}}
+  {name:'list_exports',description:'List files previously copied into the private export area.',inputSchema:{type:'object',properties:{}}},
+  {name:'get_file_info',description:'Get size and MIME type of a file in an allowed source without copying it.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'}},required:['source','path']}},
+  {name:'read_file_chunk',description:'Transfer up to 256 KiB of binary file content directly over MCP as base64. Use offset and next_offset to fetch subsequent chunks; no public URL required. The client must decode and assemble chunks.',inputSchema:{type:'object',properties:{source:sourceSchema,path:{type:'string'},offset:{type:'integer',minimum:0},length:{type:'integer',minimum:1,maximum:262144}},required:['source','path']}}
 ];
 
 const server=http.createServer(async(req,res)=>{
