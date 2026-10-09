@@ -31,3 +31,10 @@ This is intentionally a copy, not a move.
 ## Export downloads
 
 `copy_to_export` returns `export_path`, `size`, and a signed `download_url`. The URL is valid for five minutes and can be handed directly to a trusted local consumer such as Talon's `channel_send` attachment support. The URL signature does not reveal the MCP access token and the endpoint only serves files previously copied into the add-on's private export directory.
+
+## Binary transfer through MCP
+
+`get_file_info(source, path)` returns the file size, filename and MIME type.
+`read_file_chunk(source, path, offset?, length?)` returns up to 262144 bytes per MCP tool call, base64-encoded in `data`, with `next_offset` and `eof` for pagination. Both tools enforce configured read-only source boundaries and do not use an HTTP download URL or copy to exports.
+
+The MCP client must decode and assemble the chunks. **ChatGPT may display the returned data as tool output rather than a downloadable attachment; this feature does not guarantee a native ChatGPT download.** Transfer of multi-megabyte videos requires many calls and may hit client/tunnel limits. Start by testing a small file.
